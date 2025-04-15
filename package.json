@@ -1,0 +1,9 @@
+{
+  "name": "voice-notes-app",
+  "version": "1.0.0",
+  "description": "Voice Notes PWA",
+  "scripts": {
+    "start": "http-server -p 8000"
+  },
+  "dependencies": {}
+}
