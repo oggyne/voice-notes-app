@@ -338,6 +338,47 @@ const NoteList = ({ notes, onDelete, selecting, selectedIds, onToggleSelect }) =
 const joinTranscript = (...parts) =>
   parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
 
+const normalizeWords = (text) => (text || '').replace(/\s+/g, ' ').trim();
+
+const mergeTranscript = (prev, next) => {
+  const a = normalizeWords(prev);
+  const b = normalizeWords(next);
+  if (!b) return a;
+  if (!a) return b;
+  if (a === b || a.endsWith(b)) return a;
+  if (b.startsWith(a) || (b.includes(a) && b.length > a.length)) return b;
+  const aWords = a.split(' ');
+  const bWords = b.split(' ');
+  let overlap = 0;
+  const max = Math.min(aWords.length, bWords.length);
+  for (let n = max; n > 0; n--) {
+    if (aWords.slice(-n).join(' ') === bWords.slice(0, n).join(' ')) {
+      overlap = n;
+      break;
+    }
+  }
+  return [...aWords, ...bWords.slice(overlap)].join(' ');
+};
+
+const dropCommittedPrefix = (committed, interim) => {
+  const a = normalizeWords(committed);
+  const b = normalizeWords(interim);
+  if (!b) return '';
+  if (!a) return b;
+  if (a.endsWith(b)) return '';
+  const aWords = a.split(' ');
+  const bWords = b.split(' ');
+  let overlap = 0;
+  const max = Math.min(aWords.length, bWords.length);
+  for (let n = max; n > 0; n--) {
+    if (aWords.slice(-n).join(' ') === bWords.slice(0, n).join(' ')) {
+      overlap = n;
+      break;
+    }
+  }
+  return bWords.slice(overlap).join(' ');
+};
+
 // NoteForm: mic starts immediately; Save or closing the window finishes the note.
 const NoteForm = ({ onSubmit, onCancel }) => {
   const [isRecording, setIsRecording] = useState(false);
@@ -384,24 +425,25 @@ const NoteForm = ({ onSubmit, onCancel }) => {
     rec.lang = 'uk-UA';
     rec.interimResults = true;
     rec.maxAlternatives = 1;
-    rec.continuous = true;
+    rec.continuous = !/Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
     recognitionRef.current = rec;
 
     rec.onresult = (event) => {
-      let sessionFinal = '';
       let interim = '';
-      for (let i = 0; i < event.results.length; i++) {
-        const piece = event.results[i][0].transcript;
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const piece = event.results[i][0] && event.results[i][0].transcript;
+        if (!piece) continue;
         if (event.results[i].isFinal) {
-          sessionFinal = joinTranscript(sessionFinal, piece);
+          committedRef.current = mergeTranscript(committedRef.current, piece);
         } else {
-          interim = joinTranscript(interim, piece);
+          interim = mergeTranscript(interim, piece);
         }
       }
-      sessionFinalRef.current = sessionFinal;
-      interimRef.current = interim;
-      setFinalText(joinTranscript(committedRef.current, sessionFinal));
-      setInterimText(interim);
+      sessionFinalRef.current = '';
+      const shownInterim = dropCommittedPrefix(committedRef.current, interim);
+      interimRef.current = shownInterim;
+      setFinalText(committedRef.current);
+      setInterimText(shownInterim);
     };
 
     rec.onerror = (event) => {
@@ -414,7 +456,6 @@ const NoteForm = ({ onSubmit, onCancel }) => {
     };
 
     rec.onend = () => {
-      committedRef.current = joinTranscript(committedRef.current, sessionFinalRef.current);
       sessionFinalRef.current = '';
       interimRef.current = '';
       setFinalText(committedRef.current);
