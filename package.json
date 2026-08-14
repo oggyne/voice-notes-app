@@ -3,7 +3,13 @@
   "version": "1.0.0",
   "description": "Voice Notes PWA",
   "scripts": {
-    "start": "http-server -p 8000"
+    "start": "http-server -p 8000",
+    "test": "npm run test:unit && npm run test:e2e",
+    "test:unit": "node --test tests/merge-transcript.test.js tests/make-title.test.js",
+    "test:e2e": "playwright test"
   },
-  "dependencies": {}
+  "dependencies": {},
+  "devDependencies": {
+    "@playwright/test": "^1.55.0"
+  }
 }

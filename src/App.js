@@ -10,23 +10,10 @@ const truncateText = (text, maxLength = 150) => {
   return (lastSpace > 0 ? slice.slice(0, lastSpace) : slice) + '...';
 };
 
-// Auto title: first sentence, otherwise first ~8 words, max ~56 chars
-const makeTitle = (text, maxLength = 56) => {
-  const cleaned = (text || '').replace(/\s+/g, ' ').trim();
-  if (!cleaned) return 'Нотатка';
-  const sentence = cleaned.match(/^[^.!?…]+[.!?…]?/);
-  let phrase = (sentence ? sentence[0] : cleaned).replace(/[.!?…]+$/, '').trim();
-  if (phrase.length <= maxLength) {
-    const words = phrase.split(' ');
-    if (words.length > 8) phrase = words.slice(0, 8).join(' ');
-    return phrase;
-  }
-  const slice = phrase.slice(0, maxLength);
-  const lastSpace = slice.lastIndexOf(' ');
-  return (lastSpace > 20 ? slice.slice(0, lastSpace) : slice).trim();
-};
-
 const noteTitle = (note) => (note && note.title && note.title.trim()) || makeTitle(note && note.text);
+
+const sortNotesNewestFirst = (list) =>
+  [...list].sort((a, b) => String(b.createdAt || '').localeCompare(String(a.createdAt || '')));
 
 const SUMMARIZER_OPTIONS = {
   type: 'headline',
@@ -107,7 +94,7 @@ const summarizeTitle = async (text) => {
 // Utility: Format ISO date to readable string
 const formatDate = (isoString) => {
   const date = new Date(isoString);
-  return date.toLocaleString('en-US', {
+  return date.toLocaleString('uk-UA', {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -199,8 +186,9 @@ const SWIPE_DELETE = 160;
 const formatNoteForCopy = (note) =>
   [noteTitle(note), note.text || '', formatDate(note.createdAt)].join('\n');
 
-const NoteItem = ({ note, onDelete, selecting, selected, onToggleSelect }) => {
+const NoteItem = ({ note, onDelete, onUpdate, selecting, selected, onToggleSelect }) => {
   const [open, setOpen] = useState(false);
+  const [draftTitle, setDraftTitle] = useState(noteTitle(note));
   const [offset, setOffset] = useState(0);
   const [dragging, setDragging] = useState(false);
   const startX = useRef(0);
@@ -216,8 +204,20 @@ const NoteItem = ({ note, onDelete, selecting, selected, onToggleSelect }) => {
   };
 
   useEffect(() => {
+    setDraftTitle(noteTitle(note));
+  }, [note.title, note.text]);
+
+  useEffect(() => {
     if (selecting) setOff(0);
   }, [selecting]);
+
+  const commitTitle = () => {
+    const next = (draftTitle || '').trim() || makeTitle(note.text);
+    setDraftTitle(next);
+    if (next !== noteTitle(note) && onUpdate) {
+      onUpdate(note.id, { title: next });
+    }
+  };
 
   useEffect(() => {
     const el = rootRef.current;
@@ -285,12 +285,13 @@ const NoteItem = ({ note, onDelete, selecting, selected, onToggleSelect }) => {
   return (
     <div ref={rootRef} className="relative overflow-hidden rounded-lg">
       <div className="absolute inset-0 bg-red-500 flex items-center justify-end pr-4">
-        <span className="text-white font-semibold">
+        <span className="text-white font-semibold" aria-hidden="true">
           {offset <= -SWIPE_DELETE ? 'Release to delete' : 'Delete'}
         </span>
       </div>
       <div
         className={`relative p-4 select-none ${selected ? 'bg-blue-100' : 'bg-gray-100'}`}
+        data-note-panel
         style={{
           transform: `translateX(${offset}px)`,
           transition: dragging ? 'none' : 'transform 0.2s ease-out',
@@ -306,8 +307,27 @@ const NoteItem = ({ note, onDelete, selecting, selected, onToggleSelect }) => {
             <div className={`mt-1 mr-3 w-5 h-5 rounded border flex-shrink-0 ${selected ? 'bg-blue-500 border-blue-500' : 'border-gray-400 bg-white'}`} />
           ) : null}
           <div className="flex-1 min-w-0">
-            <p className="text-gray-900 font-semibold">{noteTitle(note)}</p>
-            <p className="text-sm text-gray-500 mt-1">{formatDate(note.createdAt)}</p>
+            {open ? (
+              <input
+                className="w-full bg-transparent text-gray-900 font-semibold outline-none border-b border-gray-300 pb-1"
+                data-note-title-input
+                value={draftTitle}
+                onChange={(event) => setDraftTitle(event.target.value)}
+                onBlur={commitTitle}
+                onPointerDown={(event) => event.stopPropagation()}
+                onPointerUp={(event) => event.stopPropagation()}
+                onClick={(event) => event.stopPropagation()}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') {
+                    event.preventDefault();
+                    event.currentTarget.blur();
+                  }
+                }}
+              />
+            ) : (
+              <p className="text-gray-900 font-semibold" data-note-title>{noteTitle(note)}</p>
+            )}
+            <p className="text-sm text-gray-500 mt-1" data-note-date>{formatDate(note.createdAt)}</p>
             {open ? (
               <p className="text-gray-800 text-sm mt-3 whitespace-pre-wrap">{note.text}</p>
             ) : null}
@@ -318,7 +338,7 @@ const NoteItem = ({ note, onDelete, selecting, selected, onToggleSelect }) => {
   );
 };
 
-const NoteList = ({ notes, onDelete, selecting, selectedIds, onToggleSelect }) => {
+const NoteList = ({ notes, onDelete, onUpdate, selecting, selectedIds, onToggleSelect }) => {
   return (
     <div className="space-y-2">
       {notes.length ? notes.map(note => (
@@ -326,6 +346,7 @@ const NoteList = ({ notes, onDelete, selecting, selectedIds, onToggleSelect }) =
           key={note.id}
           note={note}
           onDelete={onDelete}
+          onUpdate={onUpdate}
           selecting={selecting}
           selected={!!selectedIds[note.id]}
           onToggleSelect={onToggleSelect}
@@ -333,50 +354,6 @@ const NoteList = ({ notes, onDelete, selecting, selectedIds, onToggleSelect }) =
       )) : <p className="text-gray-500">No notes yet.</p>}
     </div>
   );
-};
-
-const joinTranscript = (...parts) =>
-  parts.filter(Boolean).join(' ').replace(/\s+/g, ' ').trim();
-
-const normalizeWords = (text) => (text || '').replace(/\s+/g, ' ').trim();
-
-const mergeTranscript = (prev, next) => {
-  const a = normalizeWords(prev);
-  const b = normalizeWords(next);
-  if (!b) return a;
-  if (!a) return b;
-  if (a === b || a.endsWith(b)) return a;
-  if (b.startsWith(a) || (b.includes(a) && b.length > a.length)) return b;
-  const aWords = a.split(' ');
-  const bWords = b.split(' ');
-  let overlap = 0;
-  const max = Math.min(aWords.length, bWords.length);
-  for (let n = max; n > 0; n--) {
-    if (aWords.slice(-n).join(' ') === bWords.slice(0, n).join(' ')) {
-      overlap = n;
-      break;
-    }
-  }
-  return [...aWords, ...bWords.slice(overlap)].join(' ');
-};
-
-const dropCommittedPrefix = (committed, interim) => {
-  const a = normalizeWords(committed);
-  const b = normalizeWords(interim);
-  if (!b) return '';
-  if (!a) return b;
-  if (a.endsWith(b)) return '';
-  const aWords = a.split(' ');
-  const bWords = b.split(' ');
-  let overlap = 0;
-  const max = Math.min(aWords.length, bWords.length);
-  for (let n = max; n > 0; n--) {
-    if (aWords.slice(-n).join(' ') === bWords.slice(0, n).join(' ')) {
-      overlap = n;
-      break;
-    }
-  }
-  return bWords.slice(overlap).join(' ');
 };
 
 // NoteForm: mic starts immediately; Save or closing the window finishes the note.
@@ -616,12 +593,14 @@ const App = () => {
   const [selecting, setSelecting] = useState(false);
   const [selectedIds, setSelectedIds] = useState({});
   const [copyStatus, setCopyStatus] = useState('');
+  const [undo, setUndo] = useState(null);
+  const undoTimerRef = useRef(null);
 
   useEffect(() => {
     const loadNotes = async () => {
       try {
         const storedNotes = await getNotes();
-        setNotes(storedNotes);
+        setNotes(sortNotesNewestFirst(storedNotes));
       } catch (error) {
         console.error('Error loading notes:', error);
       }
@@ -641,7 +620,7 @@ const App = () => {
         createdAt: new Date().toISOString()
       };
       await saveNote(note);
-      setNotes(prev => [...prev, note]);
+      setNotes(prev => [note, ...prev]);
       setCurrentScreen('list');
     } catch (error) {
       console.error('Error saving note:', error);
@@ -680,7 +659,24 @@ const App = () => {
     }
   };
 
+  const handleUpdateNote = async (id, fields) => {
+    const current = notes.find(note => note.id === id);
+    if (!current) return;
+    const updated = { ...current, ...fields };
+    if ('title' in fields) {
+      updated.title = (fields.title || '').trim() || makeTitle(current.text);
+    }
+    try {
+      await saveNote(updated);
+      setNotes(prev => prev.map(note => (note.id === id ? updated : note)));
+    } catch (error) {
+      console.error('Error updating note:', error);
+    }
+  };
+
   const handleDelete = async (id) => {
+    const current = notes.find(note => note.id === id);
+    if (!current) return;
     try {
       await deleteNote(id);
       setNotes(prev => prev.filter(note => note.id !== id));
@@ -690,8 +686,24 @@ const App = () => {
         delete next[id];
         return next;
       });
+      setUndo({ note: current });
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = setTimeout(() => setUndo(null), 6000);
     } catch (error) {
       console.error('Error deleting note:', error);
+    }
+  };
+
+  const undoDelete = async () => {
+    if (!undo) return;
+    const note = undo.note;
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setUndo(null);
+    try {
+      await saveNote(note);
+      setNotes(prev => sortNotesNewestFirst([note, ...prev.filter(item => item.id !== note.id)]));
+    } catch (error) {
+      console.error('Error restoring note:', error);
     }
   };
 
@@ -700,6 +712,7 @@ const App = () => {
       await deleteAllNotes();
       setNotes([]);
       setDeleteAllOpen(false);
+      setUndo(null);
     } catch (error) {
       console.error('Error deleting all notes:', error);
       alert('Failed to delete all notes.');
@@ -731,10 +744,19 @@ const App = () => {
           <NoteList
             notes={filteredNotes}
             onDelete={handleDelete}
+            onUpdate={handleUpdateNote}
             selecting={selecting}
             selectedIds={selectedIds}
             onToggleSelect={toggleSelect}
           />
+          {undo ? (
+            <div className="mt-3 flex items-center justify-between bg-gray-800 text-white px-3 py-2 rounded" data-undo-bar>
+              <span>Note deleted</span>
+              <button className="font-semibold underline" onClick={undoDelete}>
+                Undo
+              </button>
+            </div>
+          ) : null}
           <div className="mt-4 flex flex-wrap gap-2">
             {selecting ? (
               <>
